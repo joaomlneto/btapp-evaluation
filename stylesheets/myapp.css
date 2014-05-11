@@ -1,0 +1,9 @@
+.progress {
+	position: relative;
+}
+
+.progress-label {
+	position: absolute;
+	text-align: center;
+	width: 100%;
+}
