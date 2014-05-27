@@ -1,5 +1,26 @@
 $(function() {
 
+	// Flot tick formatter: bytes
+	function sizeTickFormatter(val, axis) {
+		return humanSize(val);
+	};
+
+	// Flot tick formatter: bytes/second
+	function speedTickFormatter(val, axis) {
+		return sizeTickFormatter(val, axis) + "/s";
+	};
+
+	function roundNextPowerOfTwo(val) {
+		return Math.pow(2, Math.ceil(Math.log(val)/Math.log(2)));
+	};
+
+	function humanSize(val) {
+		var u = 0;
+		var units = ['B','KiB','MiB','GiB','TiB'];
+		while(val > 1024) { u++; val /= 1024; }
+		return val.toFixed(2)+units[u];
+	};
+
 	// helper function: returns a string with the current datetime
 	function currentHumanTime() {
 		var date = new Date(Date.now());
@@ -72,10 +93,21 @@ $(function() {
 
 		// initialize the model
 		initialize: function() {
-			_.bindAll(this, 'elapsedTime', 'numPieces', 'setupLogPieces', 'setupLogSpeed', 'logPieces', 'logConsecutivePieces', 'logTotalPieces', 'logDownloadSpeed', 'logUploadSpeed', 'getTorrent', 'getFileList', 'getPeerList', 'getProperties', 'getProperty', 'getFile', 'getFileProperties', 'getFileProperty');
+			_.bindAll(this, 'stopCollection', 'elapsedTime', 'numPieces', 'setupLogPieces', 'setupLogSpeed', 'logPieces', 'logConsecutivePieces', 'logTotalPieces', 'logDownloadSpeed', 'logUploadSpeed', 'getTorrent', 'getFileList', 'getPeerList', 'getProperties', 'getProperty', 'getFile', 'getFileProperties', 'getFileProperty');
 			this.creationTime = new Date(Date.now());
 			this.setupLogPieces();
 			this.setupLogSpeed();
+			this.getProperties().on('change:completed_on', _.bind(this.stopCollection, this));
+		},
+
+		// stop collection of data
+		stopCollection: function() {
+			log("stopping collection");
+			this.stopListening(this.getTorrent());
+			this.stopListening(this.getProperties());
+			this.getProperties().off('change:download_speed');
+			this.getProperties().off('change:upload_speed');
+			clearInterval(this.piecesTimer);
 		},
 
 		// get elapsed time
@@ -103,6 +135,7 @@ $(function() {
 			}, this), 1000);
 		},
 
+		// stop collecting information
 		setupLogSpeed: function() {
 			this.getProperties().on('change:download_speed', _.bind(this.logDownloadSpeed, this));
 			this.getProperties().on('change:upload_speed', _.bind(this.logUploadSpeed, this));
@@ -241,7 +274,7 @@ $(function() {
 
 		// render title
 		renderTitle: function() {
-			$('#title').html('<h3 class="text-muted">My Torque App</h3>');
+			$('#title').html('<h3 class="text-muted">Btapp.js Evaluation</h3>');
 		},
 
 	});
@@ -465,7 +498,6 @@ $(function() {
 			this.addPanel('Hash', this.model.getTorrent().get('id'));
 			this.addPanel('Added on', humanTime(parseInt(this.model.getProperty('added_on')*1000)));
 			this.addPanel('Information collection started on', humanTime(Date.parse(this.model.creationTime)));
-			this.addPanel('Num Pieces', this.model.numPieces());
 		},
 
 	});
@@ -473,7 +505,7 @@ $(function() {
 
 
 	/**************************************************************************
-	 * VIEW: Torrent General Details (shows basic information about a torrent *
+	 * VIEW: Torrent Status Details (shows basic information about a torrent *
 	 **************************************************************************/
 	var TorrentStatusDetailsView = Backbone.View.extend({
 
@@ -486,6 +518,10 @@ $(function() {
 		// initialize view
 		initialize: function() {
 			_.bindAll(this, 'render');
+			this.model.getProperties().on('change:availability', _.bind(this.render, this));
+			this.model.getProperties().on('change:downloaded', _.bind(this.render, this));
+			this.model.getProperties().on('change:remaining', _.bind(this.render, this));
+			this.model.on('newpieces', _.bind(this.render, this));
 			this.render();
 		},
 
@@ -501,9 +537,15 @@ $(function() {
 
 		// render view
 		render: function() {
+			var numPieces = this.model.numPieces();
+			var size = this.model.getProperty('size');
+			var pieceSize = roundNextPowerOfTwo(size/numPieces);
 			$(this.el).empty();
-			this.addPanel('Metadata resolved',
-				this.model.getProperty('metadata_resolved') ? "since " + this.model.metadataResolutionTime : "nope");
+			this.addPanel('Size', humanSize(size));
+			this.addPanel('Downloaded / Remaining', humanSize(this.model.getProperty('downloaded')) + ' / ' + humanSize(this.model.getProperty('remaining')));
+			this.addPanel('Num Pieces', numPieces);
+			this.addPanel('Piece Size', humanSize(pieceSize) + '<br/>Assumes piece size is power of two, otherwise the value reported is incorrect.');
+			this.addPanel('Availability', (this.model.getProperty('availability')/100) + '%');
 		},
 
 	});
@@ -523,14 +565,18 @@ $(function() {
 
 		// initialize view
 		initialize: function() {
-			_.bindAll(this, 'render');
+			_.bindAll(this, 'commaExportData', 'render');
 			this.render();
 			this.model.on('newpieces', _.bind(function() {
 				this.updateChart('PieceProgress', [
 					{ label: 'total pieces',       data: this.model.totalPiecesLog },
 					{ label: 'consecutive pieces', data: this.model.consecutivePiecesLog },
 					{ label: 'nonzero pieces',     data: this.model.nonzeroPiecesLog },
-				]);
+				], { yaxis: { max: this.model.numPieces() } });
+				this.updatePanel('total', this.model.numPieces());
+				this.updatePanel('have', this.model.totalPieces);
+				this.updatePanel('consecutive', this.model.consecutivePieces);
+				this.updatePanel('dump_consecutive', this.commaSeparateData(this.model.consecutivePiecesLog, 'time', 'consecutive'));
 			}, this));
 		},
 
@@ -544,6 +590,10 @@ $(function() {
 				'</div>');
 		},
 
+		updatePanel: function(key, value) {
+			$(this.el).find('#'+key).find('.panel-body').html(value);
+		},
+
 		addChart: function(key, data) {
 			this.addPanel(key, '');
 			var width = $(this.el).find('#'+key).find('.panel-body').width();
@@ -553,35 +603,60 @@ $(function() {
 			this.updateChart(key, data);
 		},
 
-		updateChart: function(key, data) {
-			$(this.el).find('#'+key).find('.panel-body').plot(data, {
-				legend: { position: "se", },
-				xaxis:  { min: 0, mode: "time" },
-				yaxis:  { min: 0, },
-				series: {
-					lines:  {show: true},
-					points: {show: false},
-				},
-			});
+		updateChart: function(key, data, userOptions) {
+			var options = {
+				legend: { position: 'se' },
+				xaxis:  { min: 0, mode: 'time' },
+				yaxis:  { min: 0 },
+				series: { lines: {show: true}, points: {show: false} }
+			};
+			$.extend(true, options, userOptions);
+			$(this.el).find('#'+key).find('.panel-body').plot(data, options);
+		},
+
+		// export data
+		commaSeparateData: function(data, xname, yname) {
+			return xname + ', ' + yname + '<br/>' + data.map(function(el) {
+				return el.toString()
+			}).join('<br/>');
+		},
+
+		commaExportData: function(data, xname, yname) {
+			//var parentElement = $('div');
+
+			// get raw csv data
+			//var csv = this.commaSeparateData(data, xname, yname);
+			//parentElement.append('<p>'+csv+'</p>');
+
+			// download link
+			//var encodedUri = encodeURI(csv);
+			//var link = $('<a>', {href: encodedUri, download: 'data.csv'});
+			return parentElement;
 		},
 
 		// render view
 		render: function() {
 			$(this.el).empty();
+			this.addPanel('total', this.model.numPieces());
+			this.addPanel('have', this.model.totalPieces);
+			this.addPanel('sequential', this.model.consecutivePieces);
 			this.addChart('PieceProgress', [
 				{ label: 'total pieces',       data: this.model.totalPiecesLog },
 				{ label: 'consecutive pieces', data: this.model.consecutivePiecesLog,},
 				{ label: 'nonzero pieces',     data: this.model.nonzeroPiecesLog },
-			]);
+			],
+			{ yaxis: { max: this.model.numPieces() } });
+			this.addPanel('dump_consecutive', this.commaSeparateData(this.model.consecutivePiecesLog, 'time', 'consecutive'));
+			
 		},
 
 	});
 
 
 
-	/********************************************************************
-	 * VIEW: Torrent Piece Log (shows the log of pieces being commited) *
-	 ********************************************************************/
+	/*************************************************************
+	 * VIEW: Torrent Speed Log (shows the log of transfer speed) *
+	 *************************************************************/
 	var TorrentSpeedDetailsView = Backbone.View.extend({
 
 		// parent element
@@ -595,10 +670,14 @@ $(function() {
 			_.bindAll(this, 'render');
 			this.render();
 			var updateFunction = _.bind(function() {
+				this.updatePanel('download', this.model.downloadSpeed);
+				this.updatePanel('upload', this.model.uploadSpeed);
 				this.updateChart('Speed', [
 					{ label: 'download', data: this.model.downloadSpeedLog },
 					{ label: 'upload',   data: this.model.uploadSpeedLog,},
 				]);
+				this.updatePanel('dump_download', this.commaSeparateData(this.model.downloadSpeedLog, 'time', 'downspeed'));
+				this.updatePanel('dump_upload', this.commaSeparateData(this.model.uploadSpeedLog, 'time', 'upspeed'));
 			}, this);
 			this.model.getProperties().on('change:download_speed', updateFunction);
 			this.model.getProperties().on('change:upload_speed', updateFunction);
@@ -614,6 +693,10 @@ $(function() {
 				'</div>');
 		},
 
+		updatePanel: function(key, value) {
+			$(this.el).find('#'+key).find('.panel-body').html(value);
+		},
+
 		addChart: function(key, data) {
 			this.addPanel(key, '');
 			var width = $(this.el).find('#'+key).find('.panel-body').width();
@@ -625,9 +708,9 @@ $(function() {
 
 		updateChart: function(key, data) {
 			$(this.el).find('#'+key).find('.panel-body').plot(data, {
-				legend: { position: "se", },
+				legend: { position: "ne", },
 				xaxis:  { min: 0, mode: "time" },
-				yaxis:  { min: 0, },
+				yaxis:  { min: 0, tickFormatter: speedTickFormatter, },
 				series: {
 					lines:  {show: true},
 					points: {show: false},
@@ -635,13 +718,24 @@ $(function() {
 			});
 		},
 
+		// export data
+		commaSeparateData: function(data, xname, yname) {
+			return xname + ', ' + yname + '<br/>' + data.map(function(el) {
+				return el.toString()
+			}).join('<br/>');
+		},
+
 		// render view
 		render: function() {
 			$(this.el).empty();
+			this.addPanel('download', this.model.downloadSpeed);
+			this.addPanel('upload', this.model.uploadSpeed);
 			this.addChart('Speed', [
 				{ label: 'download', data: this.model.downloadSpeedLog },
 				{ label: 'upload',   data: this.model.uploadSpeedLog,},
 			]);
+			this.addPanel('dump_download', this.commaSeparateData(this.model.downloadSpeedLog, 'time', 'downspeed'));
+			this.addPanel('dump_upload', this.commaSeparateData(this.model.uploadSpeedLog, 'time', 'upspeed'));
 		},
 
 	});
