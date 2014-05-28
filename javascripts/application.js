@@ -577,6 +577,7 @@ $(function() {
 				this.updatePanel('have', this.model.totalPieces);
 				this.updatePanel('consecutive', this.model.consecutivePieces);
 				this.updatePanel('dump_consecutive', this.commaSeparateData(this.model.consecutivePiecesLog, 'time', 'consecutive'));
+				this.updatePanel('dump_total', this.commaSeparateData(this.model.totalPiecesLog, 'time', 'total'));
 			}, this));
 		},
 
@@ -616,22 +617,9 @@ $(function() {
 
 		// export data
 		commaSeparateData: function(data, xname, yname) {
-			return xname + ', ' + yname + '<br/>' + data.map(function(el) {
+			return xname + ',' + yname + '<br/>' + data.map(function(el) {
 				return el.toString()
 			}).join('<br/>');
-		},
-
-		commaExportData: function(data, xname, yname) {
-			//var parentElement = $('div');
-
-			// get raw csv data
-			//var csv = this.commaSeparateData(data, xname, yname);
-			//parentElement.append('<p>'+csv+'</p>');
-
-			// download link
-			//var encodedUri = encodeURI(csv);
-			//var link = $('<a>', {href: encodedUri, download: 'data.csv'});
-			return parentElement;
 		},
 
 		// render view
@@ -647,6 +635,7 @@ $(function() {
 			],
 			{ yaxis: { max: this.model.numPieces() } });
 			this.addPanel('dump_consecutive', this.commaSeparateData(this.model.consecutivePiecesLog, 'time', 'consecutive'));
+			this.addPanel('dump_total', this.commaSeparateData(this.model.totalPiecesLog, 'time', 'total'));
 			
 		},
 
