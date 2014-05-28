@@ -565,7 +565,7 @@ $(function() {
 
 		// initialize view
 		initialize: function() {
-			_.bindAll(this, 'commaExportData', 'render');
+			_.bindAll(this, 'commaSeparateData', 'render');
 			this.render();
 			this.model.on('newpieces', _.bind(function() {
 				this.updateChart('PieceProgress', [
